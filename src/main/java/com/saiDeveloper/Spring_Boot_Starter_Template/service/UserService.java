@@ -48,7 +48,7 @@ public class UserService {
             user.setMobile(req.getMobile());
 
             user.setPassword(encoder.encode(req.getPassword()));
-            user.setRole("USER");
+            user.setRole(req.getRole());
             repo.save(user);
             response.setMessage("User registered successfully");
             log.info("User registered successfully with email:{}", req.getEmail());// when user is registered, create an associated cart too.
