@@ -35,6 +35,8 @@ public class SpringSecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable()) // Disable CSRF for stateless APIs
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/**").hasRole("USER") // Only STUDENT role can access
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // Only ADMIN role can access
                         .requestMatchers("/api/**").authenticated() // Authenticate requests starting with /api/**
                         .anyRequest().permitAll() // Allow all other requests
                 )
