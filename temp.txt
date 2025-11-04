@@ -100,6 +100,71 @@ public enum ApprovalStatus {
     REJECTED
 }
 
+// ServiceProvider.java
+package com.example.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Entity
+@Table(name = "service_providers")
+public class ServiceProvider {
+
+    @Id
+    @Column(name = "user_id") // This will be the Primary Key AND Foreign Key
+    private Long id;
+
+    @OneToOne(fetch = FetchType.LAZY, optional = false)
+    @MapsId // Tells JPA to use the ID of the 'User' entity
+    @JoinColumn(name = "user_id")
+    private User user;
+
+    @Column(columnDefinition = "TEXT") // 'bio' can be long
+    private String bio;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "approval_status", nullable = false)
+    private ApprovalStatus approvalStatus;
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(
+            name = "service_provider_skills",
+            joinColumns = @JoinColumn(name = "user_id")
+    )
+    @Column(name = "skill")
+    private List<String> skills;
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(
+            name = "service_provider_certifications",
+            joinColumns = @JoinColumn(name = "user_id")
+    )
+    private List<Certification> certifications;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+}
+
+-------------------
+
 // Certification.java
 package com.example.model;
 
