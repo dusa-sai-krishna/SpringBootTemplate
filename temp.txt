@@ -1,0 +1,375 @@
+// UserStatus.java
+package com.example.model;
+
+public enum UserStatus {
+    ACTIVE,
+    SUSPENDED,
+    BLOCKED
+}
+
+
+// City.java
+package com.example.model;
+
+public enum City {
+    HYDERABAD,
+    BENGALURU,
+    CHENNAI,
+    DELHI
+}
+
+// User.java
+package com.example.model;
+
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Entity
+@Table(name = "users")
+public class User {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(unique = true, nullable = false, length = 100)
+    private String email;
+
+    @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false, length = 100)
+    private String name;
+
+    @Column(unique = true, length = 20)
+    private String phone;
+
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth; // Using LocalDate is preferred over java.util.Date
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private UserStatus status;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "city")
+    private City city;
+
+    @Column(name = "suspension_end_time")
+    private LocalDateTime suspensionEndTime; // Using LocalDateTime
+
+    @ElementCollection(fetch = FetchType.EAGER) // EAGER is common for roles
+    @CollectionTable(name = "user_roles", joinColumns = @JoinColumn(name = "user_id"))
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false)
+    private List<UserRole> roles;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+}
+
+
+
+-----------------------Service Provider--------------------------
+
+// ApprovalStatus.java
+package com.example.model;
+
+public enum ApprovalStatus {
+    PENDING,
+    APPROVED,
+    REJECTED
+}
+
+// Certification.java
+package com.example.model;
+
+import jakarta.persistence.Embeddable;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Embeddable // Declares this as a component that can be embedded in an entity
+public class Certification {
+
+    @Column(nullable = false)
+    private String name;
+
+    @Column(nullable = false)
+    private String url;
+}
+
+
+--------------------------------------Dto-------------------------------------
+// CustomerRegisterDto.java
+package com.example.dto;
+
+import com.example.model.City; // Import your enum
+import jakarta.validation.constraints.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDate;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class CustomerRegisterDto {
+
+    @NotBlank(message = "Name cannot be blank")
+    @Size(min = 2, max = 100, message = "Name must be between 2 and 100 characters")
+    private String name;
+
+    @NotBlank(message = "Email cannot be blank")
+    @Email(message = "Please provide a valid email address")
+    @Size(max = 100, message = "Email must be 100 characters or less")
+    private String email;
+
+    @NotBlank(message = "Password cannot be blank")
+    @Size(min = 8, max = 255, message = "Password must be between 8 and 255 characters")
+    private String password;
+
+    @NotBlank(message = "Phone number cannot be blank")
+    @Pattern(regexp = "^\\+?[0-9]{10,15}$", message = "Invalid phone number format")
+    private String phone;
+
+    @NotNull(message = "Date of birth cannot be null")
+    @Past(message = "Date of birth must be in the past")
+    private LocalDate dateOfBirth;
+
+    @NotNull(message = "City cannot be null")
+    private City city;
+}
+----------------------------
+
+  // CertificationDto.java
+  package com.example.dto;
+
+  import jakarta.validation.constraints.NotBlank;
+  import jakarta.validation.constraints.Size;
+  import lombok.AllArgsConstructor;
+  import lombok.Data;
+  import lombok.NoArgsConstructor;
+  import org.hibernate.validator.constraints.URL; // The standard URL validator in Spring
+
+  @Data
+  @NoArgsConstructor
+  @AllArgsConstructor
+  public class CertificationDto {
+
+      @NotBlank(message = "Certification name cannot be blank")
+      @Size(max = 255)
+      private String name;
+
+      @NotBlank(message = "Certification URL cannot be blank")
+      @URL(message = "Please provide a valid URL") // Uses Hibernate Validator
+      @Size(max = 500)
+      private String url;
+  }
+
+  ---------------------
+
+  // ServiceProviderRegisterDto.java
+  package com.example.dto;
+
+  import com.example.model.City;
+  import jakarta.validation.Valid; // Important for nested validation
+  import jakarta.validation.constraints.*;
+  import lombok.AllArgsConstructor;
+  import lombok.Builder;
+  import lombok.Data;
+  import lombok.NoArgsConstructor;
+
+  import java.time.LocalDate;
+  import java.util.List;
+
+  @Data
+  @Builder
+  @NoArgsConstructor
+  @AllArgsConstructor
+  public class ServiceProviderRegisterDto {
+
+      // --- Basic User Fields ---
+
+      @NotBlank(message = "Name cannot be blank")
+      @Size(min = 2, max = 100, message = "Name must be between 2 and 100 characters")
+      private String name;
+
+      @NotBlank(message = "Email cannot be blank")
+      @Email(message = "Please provide a valid email address")
+      @Size(max = 100, message = "Email must be 100 characters or less")
+      private String email;
+
+      @NotBlank(message = "Password cannot be blank")
+      @Size(min = 8, max = 255, message = "Password must be between 8 and 255 characters")
+      private String password;
+
+      @NotBlank(message = "Phone number cannot be blank")
+      @Pattern(regexp = "^\\+?[0-9]{10,15}$", message = "Invalid phone number format")
+      private String phone;
+
+      @NotNull(message = "Date of birth cannot be null")
+      @Past(message = "Date of birth must be in the past")
+      private LocalDate dateOfBirth;
+
+      @NotNull(message = "City cannot be null")
+      private City city;
+
+      // --- Service Provider Specific Fields ---
+
+      @Size(max = 2000, message = "Bio must be 2000 characters or less")
+      private String bio; // Often optional, so no @NotBlank
+
+      @Size(max = 50, message = "You can add a maximum of 50 skills")
+      private List<String> skills;
+
+      @Valid // This annotation triggers validation on each object in the list
+      @Size(max = 20, message = "You can add a maximum of 20 certifications")
+      private List<CertificationDto> certifications;
+  }
+
+
+  ---------------------Register Service Methods----------------------
+
+  public User registerCustomer(CustomerRegisterDto dto) {
+          // 1. Check if user already exists
+          checkIfUserExists(dto.getEmail());
+
+          // 2. Build the User entity
+          User user = User.builder()
+                  .name(dto.getName())
+                  .email(dto.getEmail())
+                  .password(passwordEncoder.encode(dto.getPassword())) // Always encode passwords
+                  .phone(dto.getPhone())
+                  .dateOfBirth(dto.getDateOfBirth())
+                  .city(dto.getCity())
+                  .status(UserStatus.ACTIVE) // Default status for new users
+                  .roles(List.of(UserRole.USER)) // Assign the correct role
+                  .build();
+
+          // 3. Save and return the new user
+          return userRepository.save(user);
+      }
+
+      /**
+       * Registers a new Service Provider.
+       * This is a transactional operation: it saves a User AND a ServiceProvider profile.
+       *
+       * @param dto The service provider registration data.
+       * @return The newly created ServiceProvider profile.
+       * @throws UserExistsException if the email is already taken.
+       */
+      @Transactional
+      public ServiceProvider registerServiceProvider(ServiceProviderRegisterDto dto) {
+          // 1. Check if user already exists
+          checkIfUserExists(dto.getEmail());
+
+          // 2. Build and save the User entity
+          User user = User.builder()
+                  .name(dto.getName())
+                  .email(dto.getEmail())
+                  .password(passwordEncoder.encode(dto.getPassword()))
+                  .phone(dto.getPhone())
+                  .dateOfBirth(dto.getDateOfBirth())
+                  .city(dto.getCity())
+                  .status(UserStatus.ACTIVE) // User account is active
+                  .roles(List.of(UserRole.SERVICE_PROVIDER)) // Assign the correct role
+                  .build();
+
+          User savedUser = userRepository.save(user);
+
+          // 3. Build the ServiceProvider entity
+          ServiceProvider serviceProvider = ServiceProvider.builder()
+                  .user(savedUser) // Link to the User entity
+                  .bio(dto.getBio())
+                  .skills(dto.getSkills())
+                  .certifications(mapCertifications(dto.getCertifications()))
+                  .approvalStatus(ApprovalStatus.PENDING) // Default to PENDING
+                  .build();
+
+          // 4. Save and return the new service provider profile
+          return serviceProviderRepository.save(serviceProvider);
+      }
+
+      // --- Private Helper Methods ---
+
+      /**
+       * Helper to map Certification DTOs to Embeddable entities.
+       */
+      private List<Certification> mapCertifications(List<CertificationDto> dtoList) {
+          if (dtoList == null || dtoList.isEmpty()) {
+              return new ArrayList<>();
+          }
+          return dtoList.stream()
+                  .map(dto -> new Certification(dto.getName(), dto.getUrl()))
+                  .collect(Collectors.toList());
+      }
+
+
+
+
+
+      {
+        "name": "Priya Sharma",
+        "email": "priya.sharma@example.com",
+        "password": "MySecurePassword@123",
+        "phone": "+919876543210",
+        "dateOfBirth": "1995-08-20",
+        "city": "BENGALURU"
+      }
+
+
+
+
+
+
+      {
+        "name": "Rajesh Kumar",
+        "email": "rajesh.electrics@example.com",
+        "password": "P@sswordForRajesh!_456",
+        "phone": "+918877665544",
+        "dateOfBirth": "1988-02-10",
+        "city": "HYDERABAD",
+        "bio": "Certified electrician with over 15 years of experience in residential and commercial wiring.",
+        "skills": [
+          "Electrical Wiring",
+          "Circuit Breaker Installation",
+          "Appliance Repair",
+          "Smart Home Setup"
+        ],
+        "certifications": [
+          {
+            "name": "Master Electrician License",
+            "url": "https://www.licenseboard.example.com/id/RK12345"
+          },
+          {
+            "name": "Certified Smart Home Technician",
+            "url": "https://www.techcerts.example.com/verify/RK987"
+          }
+        ]
+      }
