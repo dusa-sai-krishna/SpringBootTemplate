@@ -1,216 +1,84 @@
-// ServiceCategory.java
-package com.example.demo.model;
-
-import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
-
-import java.time.LocalDateTime;
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@Entity
-@Table(name = "service_categories")
-public class ServiceCategory {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(nullable = false, unique = true, length = 100)
-    private String name;
-
-    @Column(length = 500)
-    private String description;
-
-    @CreationTimestamp
-    @Column(nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-
-    @UpdateTimestamp
-    @Column(nullable = false)
-    private LocalDateTime updatedAt;
-}
-
-
-
-----------------
-
-
-// ServiceCategoryDto.java
-package com.example.demo.dto;
-
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
-
-// Using a record is a modern and concise way to create an immutable DTO.
-// Validation annotations are placed directly on the component declarations.
-public record ServiceCategoryDto(
-    @NotBlank(message = "Category name cannot be blank.")
-    @Size(min = 3, max = 100, message = "Name must be between 3 and 100 characters.")
-    String name,
-
-    @Size(max = 500, message = "Description cannot be longer than 500 characters.")
-    String description
-) {
-    // The @Builder annotation can be added to the canonical constructor if needed,
-    // but records are typically instantiated directly: new ServiceCategoryDto("Name", "Desc")
-}
-
-
-
-------------------------
-
-// ServiceCategoryService.java
-package com.example.demo.service;
+// ServiceCategoryController.java
+package com.example.demo.controller;
 
 import com.example.demo.dto.ServiceCategoryDto;
-import com.example.demo.exception.ServiceCategoryAlreadyExistsException;
-import com.example.demo.exception.ServiceCategoryNotFoundException;
-import com.example.demo.model.ServiceCategory;
-import com.example.demo.repository.ServiceCategoryRepository;
+import com.example.demo.service.ServiceCategoryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.net.URI;
 import java.util.List;
-import java.util.stream.Collectors;
 
-@Service
+@RestController
+@RequestMapping("/api/v1/categories")
 @RequiredArgsConstructor
-@Slf4j
-public class ServiceCategoryService {
+public class ServiceCategoryController {
 
-    private final ServiceCategoryRepository categoryRepository;
-
-    /**
-     * Creates a new ServiceCategory.
-     * Logic is linear; validation is outsourced.
-     */
-    @Transactional
-    public ServiceCategoryDto createCategory(ServiceCategoryDto categoryDto) {
-        log.info("Attempting to create service category: {}", categoryDto.name());
-
-        // Outsourced validation check
-        validateCategoryNameDoesNotExist(categoryDto.name());
-
-        ServiceCategory newCategory = toEntity(categoryDto);
-        ServiceCategory savedCategory = categoryRepository.save(newCategory);
-
-        log.info("Successfully created service category with ID: {}", savedCategory.getId());
-        return toDto(savedCategory);
-    }
+    private final ServiceCategoryService categoryService;
 
     /**
-     * Retrieves a ServiceCategory by its ID.
-     * Logic is linear; finding is outsourced.
+     * POST /api/v1/categories : Creates a new service category.
+     * Uses @Valid to trigger DTO validations.
      */
-    @Transactional(readOnly = true)
-    public ServiceCategoryDto getCategoryById(Long id) {
-        log.info("Fetching service category with ID: {}", id);
+    @PostMapping
+    public ResponseEntity<ServiceCategoryDto> createCategory(@Valid @RequestBody ServiceCategoryDto categoryDto) {
+        ServiceCategoryDto createdCategory = categoryService.createCategory(categoryDto);
 
-        // Outsourced find-or-throw logic
-        ServiceCategory category = findCategoryByIdOrThrow(id);
+        // Build a "Location" header for the newly created resource
+        URI location = ServletUriComponentsBuilder
+                .fromCurrentRequest()
+                .path("/{id}")
+                .buildAndExpand(createdCategory.id()) // Assuming Dto is updated to have ID, or service returns it
+                .toUri();
 
-        log.info("Found service category: {}", category.getName());
-        return toDto(category);
+        // Return 201 Created
+        return ResponseEntity.created(location).body(createdCategory);
     }
 
     /**
-     * Updates an existing ServiceCategory.
-     * Logic is linear; validation and finding are outsourced.
+     * GET /api/v1/categories/{id} : Retrieves a specific service category by ID.
      */
-    @Transactional
-    public ServiceCategoryDto updateCategory(Long id, ServiceCategoryDto categoryDto) {
-        log.info("Attempting to update service category with ID: {}", id);
-
-        // Outsourced find-or-throw logic
-        ServiceCategory existingCategory = findCategoryByIdOrThrow(id);
-
-        // Outsourced validation for name uniqueness on update
-        validateCategoryNameIsAvailable(categoryDto.name(), id);
-
-        // Map updates
-        existingCategory.setName(categoryDto.name());
-        existingCategory.setDescription(categoryDto.description());
-
-        ServiceCategory updatedCategory = categoryRepository.save(existingCategory);
-
-        log.info("Successfully updated service category with ID: {}", updatedCategory.getId());
-        return toDto(updatedCategory);
+    @GetMapping("/{id}")
+    public ResponseEntity<ServiceCategoryDto> getCategoryById(@PathVariable Long id) {
+        ServiceCategoryDto categoryDto = categoryService.getCategoryById(id);
+        // Return 200 OK
+        return ResponseEntity.ok(categoryDto);
     }
 
     /**
-     * Deletes a ServiceCategory by its ID.
-     * Logic is linear; validation is outsourced.
+     * GET /api/v1/categories : Retrieves all service categories.
+     * (Adding this common endpoint for completeness)
      */
-    @Transactional
-    public void deleteCategory(Long id) {
-        log.info("Attempting to delete service category with ID: {}", id);
-
-        // Outsourced find-or-throw logic ensures entity exists before delete
-        ServiceCategory categoryToDelete = findCategoryByIdOrThrow(id);
-
-        categoryRepository.delete(categoryToDelete);
-
-        log.info("Successfully deleted service category with ID: {}", id);
-    }
-
-    // --- HELPER & VALIDATION METHODS (Outsourced Logic) ---
-
-    /**
-     * Helper to find a category or throw ServiceCategoryNotFoundException.
-     */
-    private ServiceCategory findCategoryByIdOrThrow(Long id) {
-        return categoryRepository.findById(id)
-            .orElseThrow(() -> {
-                log.warn("Service category with ID: {} not found.", id);
-                return new ServiceCategoryNotFoundException("Service category with ID " + id + " not found.");
-            });
+    @GetMapping
+    public ResponseEntity<List<ServiceCategoryDto>> getAllCategories() {
+        List<ServiceCategoryDto> categories = categoryService.getAllCategories(); // Assumes service has this method
+        // Return 200 OK
+        return ResponseEntity.ok(categories);
     }
 
     /**
-     * Helper to validate if a category name is already in use during creation.
+     * PUT /api/v1/categories/{id} : Updates an existing service category.
+     * Uses @Valid to trigger DTO validations.
      */
-    private void validateCategoryNameDoesNotExist(String name) {
-        categoryRepository.findByName(name).ifPresent(category -> {
-            log.warn("Attempted to create category with existing name: {}", name);
-            throw new ServiceCategoryAlreadyExistsException("Service category with name '" + name + "' already exists.");
-        });
+    @PutMapping("/{id}")
+    public ResponseEntity<ServiceCategoryDto> updateCategory(@PathVariable Long id,
+                                                             @Valid @RequestBody ServiceCategoryDto categoryDto) {
+        ServiceCategoryDto updatedCategory = categoryService.updateCategory(id, categoryDto);
+        // Return 200 OK
+        return ResponseEntity.ok(updatedCategory);
     }
 
     /**
-     * Helper to validate if a name is available during an update.
-     * It checks if the name is taken by *another* category.
+     * DELETE /api/v1/categories/{id} : Deletes a service category by ID.
      */
-    private void validateCategoryNameIsAvailable(String name, Long currentId) {
-        categoryRepository.findByName(name).ifPresent(category -> {
-            // If a category with this name exists, AND it's not the one we are currently editing...
-            if (!category.getId().equals(currentId)) {
-                log.warn("Attempted to update category ID: {} to existing name: {}", currentId, name);
-                throw new ServiceCategoryAlreadyExistsException("Service category with name '" + name + "' already exists.");
-            }
-        });
-    }
-
-
-    // --- MAPPERS ---
-
-    private ServiceCategoryDto toDto(ServiceCategory category) {
-        return new ServiceCategoryDto(category.getName(), category.getDescription());
-    }
-
-    private ServiceCategory toEntity(ServiceCategoryDto dto) {
-        return ServiceCategory.builder()
-                .name(dto.name())
-                .description(dto.description())
-                .build();
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteCategory(@PathVariable Long id) {
+        categoryService.deleteCategory(id);
+        // Return 204 No Content
+        return ResponseEntity.noContent().build();
     }
 }
