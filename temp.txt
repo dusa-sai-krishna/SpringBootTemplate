@@ -1,319 +1,119 @@
-// ServicesProvided.java
-package com.example.model;
-
-import com.example.model.enums.Availability;
-import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
-
-import java.time.LocalDateTime;
-import java.time.LocalTime; // Import LocalTime
-
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@Entity
-@Table(name = "services_provided")
-public class ServicesProvided {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
-    @Column(nullable = false, length = 200)
-    private String name;
-
-    @Column(columnDefinition = "TEXT")
-    private String description;
-
-    @Column(nullable = false)
-    private float price;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 50)
-    private Availability availability;
-
-    // --- NEW FIELDS ---
-    @Column(name = "start_time", nullable = false)
-    private LocalTime startTime;
-
-    @Column(name = "end_time", nullable = false)
-    private LocalTime endTime;
-
-    // --- Relationships ---
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "service_category_id", nullable = false)
-    private ServiceCategory serviceCategory;
-
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "provider_id", nullable = false, referencedColumnName = "user_id")
-    private ServiceProvider serviceProvider;
-
-    // --- Timestamps ---
-
-    @CreationTimestamp
-    @Column(name = "created_at", updatable = false, nullable = false)
-    private LocalDateTime createdAt;
-
-    @UpdateTimestamp
-    @Column(name = "updated_at", nullable = false)
-    private LocalDateTime updatedAt;
-}
-
-
----------------------------
-
-// ServicesProvidedDto.java
-package com.example.demo.dto;
-
-import com.example.model.enums.Availability;
-import jakarta.validation.constraints.*;
-import java.time.LocalTime; // Import LocalTime
-
-public record ServicesProvidedDto(
-    @NotBlank(message = "Service name cannot be blank.")
-    @Size(min = 3, max = 200, message = "Service name must be between 3 and 200 characters.")
-    String name,
-
-    @Size(max = 1000, message = "Description cannot be longer than 1000 characters.")
-    String description,
-
-    @NotNull(message = "Price cannot be null.")
-    @Positive(message = "Price must be a positive value.")
-    Float price,
-
-    @NotNull(message = "Availability must be specified.")
-    Availability availability,
-
-    @NotNull(message = "Service Category ID cannot be null.")
-    Long serviceCategoryId,
-
-    // --- NEW FIELDS ---
-    @NotNull(message = "Start time cannot be null.")
-    LocalTime startTime,
-
-    @NotNull(message = "End time cannot be null.")
-    LocalTime endTime
-) {
-    // Note: You could add a class-level validator to ensure endTime > startTime
-}
-
-
--------------------------------
-
-
-
-
-// ServicesProvidedService.java
-package com.example.demo.service;
+// ServicesProvidedController.java
+package com.example.demo.controller;
 
 import com.example.demo.dto.ServicesProvidedDto;
-import com.example.demo.exception.ResourceNotFoundException;
-import com.example.demo.exception.ServiceProviderNotApprovedException;
-import com.example.demo.exception.ServicesProvidedNotFoundException;
-import com.example.model.ServiceCategory;
-import com.example.model.ServiceProvider;
-import com.example.model.ServicesProvided;
-import com.example.model.User;
-import com.example.model.enums.ApprovalStatus;
-import com.example.repository.ServiceCategoryRepository;
-import com.example.repository.ServiceProviderRepository;
-import com.example.repository.ServicesProvidedRepository;
-import com.example.repository.UserRepository;
+import com.example.demo.service.ServicesProvidedService;
+import com.example.demo.config.JwtService; // Assuming this is your JwtService package
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
-@Service
+@RestController
+@RequestMapping("/api/v1/services-provided")
 @RequiredArgsConstructor
 @Slf4j
-public class ServicesProvidedService {
+public class ServicesProvidedController {
 
-    private final ServicesProvidedRepository servicesProvidedRepository;
-    private final UserRepository userRepository;
-    private final ServiceProviderRepository serviceProviderRepository;
-    private final ServiceCategoryRepository serviceCategoryRepository;
+    private final ServicesProvidedService servicesProvidedService;
+    private final JwtService jwtService;
 
     /**
-     * Adds a new service for an approved provider.
-     * (No logical change here, but the mapper it calls is updated)
+     * POST /api/v1/services-provided : Creates a new service.
+     * The provider is identified by their JWT token.
      */
-    @Transactional
-    public ServicesProvidedDto addService(String providerEmail, ServicesProvidedDto serviceDto) {
-        log.info("Attempting to add service '{}' for provider {}",
-            serviceDto.name(), providerEmail);
+    @PostMapping
+    public ResponseEntity<ServicesProvidedDto> addService(
+            @RequestHeader("Authorization") String authHeader,
+            @Valid @RequestBody ServicesProvidedDto serviceDto) {
 
-        isApproved(providerEmail);
-        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
-        ServiceCategory category = findCategoryByIdOrThrow(serviceDto.serviceCategoryId());
+        String email = extractEmailFromToken(authHeader);
+        ServicesProvidedDto createdService = servicesProvidedService.addService(email, serviceDto);
 
-        ServicesProvided newService = toEntity(serviceDto, provider, category);
-        ServicesProvided savedService = servicesProvidedRepository.save(newService);
-
-        log.info("Successfully added service with ID {}", savedService.getId());
-        return toDto(savedService);
+        // Return 201 Created
+        return ResponseEntity.status(HttpStatus.CREATED).body(createdService);
     }
 
     /**
-     * Updates an existing service.
-     * (MODIFIED to include startTime and endTime)
+     * PUT /api/v1/services-provided/{serviceId} : Updates an existing service.
+     * Ensures the user updating the service is the one who owns it.
      */
-    @Transactional
-    public ServicesProvidedDto updateService(Long serviceId, ServicesProvidedDto serviceDto) {
-        log.info("Attempting to update service with ID: {}", serviceId);
+    @PutMapping("/{serviceId}")
+    public ResponseEntity<ServicesProvidedDto> updateService(
+            @PathVariable Long serviceId,
+            @RequestHeader("Authorization") String authHeader,
+            @Valid @RequestBody ServicesProvidedDto serviceDto) {
 
-        ServicesProvided existingService = findServiceByIdOrThrow(serviceId);
-        ServiceCategory newCategory = findCategoryByIdOrThrow(serviceDto.serviceCategoryId());
+        String email = extractEmailFromToken(authHeader);
+        // Assumes service method is: updateService(Long serviceId, ServicesProvidedDto dto, String email)
+        ServicesProvidedDto updatedService = servicesProvidedService.updateService(serviceId, serviceDto, email);
 
-        // Main logic: Map updates
-        existingService.setName(serviceDto.name());
-        existingService.setDescription(serviceDto.description());
-        existingService.setPrice(serviceDto.price());
-        existingService.setAvailability(serviceDto.availability());
-        existingService.setServiceCategory(newCategory);
-
-        // --- UPDATED ---
-        existingService.setStartTime(serviceDto.startTime());
-        existingService.setEndTime(serviceDto.endTime());
-
-        ServicesProvided updatedService = servicesProvidedRepository.save(existingService);
-        log.info("Successfully updated service with ID: {}", updatedService.getId());
-        return toDto(updatedService);
+        // Return 200 OK
+        return ResponseEntity.ok(updatedService);
     }
 
     /**
-     * Reads a single service by its ID.
-     * (No change)
+     * GET /api/v1/services-provided/{serviceId} : Retrieves a specific service by ID.
+     * This is a public endpoint.
      */
-    @Transactional(readOnly = true)
-    public ServicesProvidedDto getServiceById(Long serviceId) {
-        log.info("Fetching service with ID: {}", serviceId);
-        ServicesProvided service = findServiceByIdOrThrow(serviceId);
-        log.info("Found service: {}", service.getName());
-        return toDto(service);
+    @GetMapping("/{serviceId}")
+    public ResponseEntity<ServicesProvidedDto> getServiceById(@PathVariable Long serviceId) {
+        ServicesProvidedDto serviceDto = servicesProvidedService.getServiceById(serviceId);
+
+        // Return 200 OK
+        return ResponseEntity.ok(serviceDto);
     }
 
     /**
-     * Fetches all services belonging to a specific category.
-     * (No change)
+     * GET /api/v1/services-provided/category/{categoryId} : Retrieves all services
+     * for a given category. This is a public endpoint.
      */
-    @Transactional(readOnly = true)
-    public List<ServicesProvidedDto> getAllServicesByCategory(Long categoryId) {
-        log.info("Fetching all services for category ID: {}", categoryId);
-        ServiceCategory category = findCategoryByIdOrThrow(categoryId);
-        List<ServicesProvided> services = servicesProvidedRepository.findAllByServiceCategory(category);
+    @GetMapping("/category/{categoryId}")
+    public ResponseEntity<List<ServicesProvidedDto>> getServicesByCategory(
+            @PathVariable Long categoryId) {
 
-        log.info("Found {} services for category ID: {}", services.size(), categoryId);
-        return services.stream()
-                .map(this::toDto)
-                .collect(Collectors.toList());
+        List<ServicesProvidedDto> services = servicesProvidedService.getAllServicesByCategory(categoryId);
+
+        // Return 200 OK
+        return ResponseEntity.ok(services);
     }
 
     /**
-     * Deletes a service by its ID.
-     * (No change)
-     * */
-    @Transactional
-    public void deleteService(Long serviceId) {
-        log.info("Attempting to delete service with ID: {}", serviceId);
-        ServicesProvided service = findServiceByIdOrThrow(serviceId);
-        servicesProvidedRepository.delete(service);
-        log.info("Successfully deleted service with ID: {}", serviceId);
+     * DELETE /api/v1/services-provided/{serviceId} : Deletes a service.
+     * Ensures the user deleting the service is the one who owns it.
+     */
+    @DeleteMapping("/{serviceId}")
+    public ResponseEntity<Void> deleteService(
+            @PathVariable Long serviceId,
+            @RequestHeader("Authorization") String authHeader) {
+
+        String email = extractEmailFromToken(authHeader);
+        // Assumes service method is: deleteService(Long serviceId, String email)
+        servicesProvidedService.deleteService(serviceId, email);
+
+        // Return 204 No Content
+        return ResponseEntity.noContent().build();
     }
 
 
-    // --- PRIVATE HELPER & VALIDATION METHODS (No changes) ---
+    // --- Private Helper Method ---
 
-    private void isApproved(String email) {
-        ServiceProvider provider = findProviderByEmailOrThrow(email);
-        if (provider.getApprovalStatus() != ApprovalStatus.APPROVED) {
-            log.warn("Service provider {} is not approved. Status: {}",
-                email, provider.getApprovalStatus());
-            throw new ServiceProviderNotApprovedException(
-                "Service provider " + email + " is not approved to add services.");
+    /**
+     * Extracts the email from the "Bearer <token>" header.
+     */
+    private String extractEmailFromToken(String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            log.warn("Invalid or missing Authorization header.");
+            // In a real app, a Spring Security filter would handle this
+            // before it even reaches the controller.
+            throw new IllegalArgumentException("Invalid Authorization header");
         }
-        log.debug("Provider {} is approved.", email);
-    }
-
-    private User findUserByEmailOrThrow(String email) {
-        return userRepository.findByEmail(email)
-            .orElseThrow(() -> {
-                log.warn("User not found with email: {}", email);
-                return new ResourceNotFoundException("User not found with email: " + email);
-            });
-    }
-
-    private ServiceProvider findProviderByEmailOrThrow(String email) {
-        User user = findUserByEmailOrThrow(email);
-        return serviceProviderRepository.findById(user.getId())
-            .orElseThrow(() -> {
-                log.warn("ServiceProvider profile not found for user ID: {}", user.getId());
-                return new ResourceNotFoundException(
-                    "ServiceProvider profile not found for user: " + email);
-            });
-    }
-
-    private ServiceCategory findCategoryByIdOrThrow(Long categoryId) {
-        return serviceCategoryRepository.findById(categoryId)
-            .orElseThrow(() -> {
-                log.warn("ServiceCategory not found with ID: {}", categoryId);
-                return new ResourceNotFoundException(
-                    "ServiceCategory not found with ID: " + categoryId);
-            });
-    }
-
-fs
-    private ServicesProvided findServiceByIdOrThrow(Long serviceId) {
-        return servicesProvidedRepository.findById(serviceId)
-            .orElseThrow(() -> {
-                log.warn("ServicesProvided not found with ID: {}", serviceId);
-                return new ServicesProvidedNotFoundException(
-                    "Service not found with ID: " + serviceId);
-            });
-    }
-
-    // --- MAPPERS (MODIFIED) ---
-
-    /**
-     * (MODIFIED)
-     */
-    private ServicesProvidedDto toDto(ServicesProvided service) {
-        return new ServicesProvidedDto(
-                service.getName(),
-                service.getDescription(),
-                service.getPrice(),
-                service.getAvailability(),
-                service.getServiceCategory().getId(),
-                service.getStartTime(),  // Added
-                service.getEndTime()      // Added
-        );
-    }
-
-    /**
-     * (MODIFIED)
-     */
-    private ServicesProvided toEntity(ServicesProvidedDto dto,
-                                      ServiceProvider provider,
-                                      ServiceCategory category) {
-        return ServicesProvided.builder()
-                .name(dto.name())
-                .description(dto.description())
-                .price(dto.price())
-                .availability(dto.availability())
-                .serviceProvider(provider)
-                .serviceCategory(category)
-                .startTime(dto.startTime()) // Added
-                .endTime(dto.endTime())     // Added
-                .build();
+        // Extract token by removing "Bearer " prefix (7 characters)
+        String token = authHeader.substring(7);
+        return jwtService.extractEmail(token);
     }
 }
