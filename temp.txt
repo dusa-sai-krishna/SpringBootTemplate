@@ -1,9 +1,445 @@
-// ServicesProvidedController.java
+// BookingStatus.java
+package com.example.model.enums;
+
+public enum BookingStatus {
+    PENDING,
+    CONFIRMED,
+    CANCELLED_BY_USER,
+    CANCELLED_BY_PROVIDER,
+    IN_PROGRESS,
+    COMPLETED
+}
+
+--------------
+// Booking.java
+package com.example.model;
+
+import com.example.model.enums.BookingStatus;
+import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
+import java.time.LocalDateTime;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@Entity
+@Table(name = "bookings")
+public class Booking {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    // --- Relationships ---
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "customer_id", nullable = false)
+    private User customer;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "provider_id", nullable = false, referencedColumnName = "user_id")
+    private ServiceProvider provider;
+
+    /**
+     * This links to the specific service being booked (e.g., "AC Repair").
+     * This entity (ServicesProvided) already contains the link to the ServiceCategory.
+     */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "service_id", nullable = false)
+    private ServicesProvided service;
+
+    // --- Booking Details ---
+
+    @Column(name = "start_time", nullable = false)
+    private LocalDateTime startTime;
+
+    @Column(name = "end_time", nullable = false)
+    private LocalDateTime endTime;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 50)
+    private BookingStatus status;
+
+    @Column(name = "extra_instructions", columnDefinition = "TEXT")
+    private String extraInstructions;
+
+    // --- Timestamps ---
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false, nullable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+}
+
+==================
+
+// BookingRequestDto.java
+package com.example.demo.dto;
+
+import jakarta.validation.constraints.Future;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+
+import java.time.LocalDateTime;
+
+/**
+ * DTO for a customer creating a new booking.
+ */
+public record BookingRequestDto(
+    @NotNull(message = "Service ID cannot be null.")
+    Long servicesProvidedId,
+
+    @NotNull(message = "Start time cannot be null.")
+    @Future(message = "Booking start time must be in the future.")
+    LocalDateTime startTime,
+
+    @NotNull(message = "End time cannot be null.")
+    @Future(message = "Booking end time must be in the future.")
+    LocalDateTime endTime,
+
+    @Size(max = 1000, message = "Instructions cannot be longer than 1000 characters.")
+    String extraInstructions
+) {
+    // You can add a class-level validator here to ensure
+    // that endTime is always after startTime.
+}
+
+
+------------------------
+
+// BookingResponseDto.java
+package com.example.demo.dto;
+
+import com.example.model.enums.BookingStatus;
+import java.time.LocalDateTime;
+
+/**
+ * DTO for returning booking details to the client.
+ */
+public record BookingResponseDto(
+    Long id,
+    Long customerId,
+    String customerName, // Example of useful data
+    Long providerId,
+    String providerName, // Example of useful data
+    Long serviceId,
+    String serviceName,
+    LocalDateTime startTime,
+    LocalDateTime endTime,
+    BookingStatus status,
+    String extraInstructions
+) {
+}
+
+------------------
+
+// BookingService.java
+package com.example.demo.service;
+
+import com.example.demo.dto.BookingRequestDto;
+import com.example.demo.dto.BookingResponseDto;
+import com.example.demo.exception.*;
+import com.example.model.*;
+import com.example.model.enums.ApprovalStatus;
+import com.example.model.enums.BookingStatus;
+import com.example.model.enums.UserStatus; // Assuming this exists
+import com.example.repository.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class BookingService {
+
+    private final BookingRepository bookingRepository;
+    private final UserRepository userRepository;
+    private final ServiceProviderRepository providerRepository;
+    private final ServicesProvidedRepository servicesProvidedRepository;
+
+    /**
+     * Creates a new booking after validating user, provider, and payment.
+     */
+    @Transactional
+    public void book(String customerEmail, BookingRequestDto bookingDto) {
+        log.info("Attempting to create booking for service {} by user {}",
+                bookingDto.servicesProvidedId(), customerEmail);
+
+        User customer = findUserByEmailOrThrow(customerEmail);
+        checkUserStatus(customer); // Private check
+
+        ServicesProvided service = findServiceByIdOrThrow(bookingDto.servicesProvidedId());
+        ServiceProvider provider = service.getServiceProvider();
+        checkProviderStatus(provider); // Private check
+
+        // Placeholder for payment logic
+        boolean paymentSuccessful = processPayment(customer, service.getPrice());
+        if (!paymentSuccessful) {
+            log.warn("Payment failed for user {}", customerEmail);
+            throw new RuntimeException("Payment processing failed."); // Or a custom PaymentFailedException
+        }
+
+        Booking newBooking = Booking.builder()
+                .customer(customer)
+                .provider(provider)
+                .service(service)
+                .startTime(bookingDto.startTime())
+                .endTime(bookingDto.endTime())
+                .extraInstructions(bookingDto.extraInstructions())
+                .status(BookingStatus.PENDING) // Set initial status
+                .build();
+
+        bookingRepository.save(newBooking);
+        log.info("Booking created with ID {} in PENDING status.", newBooking.getId());
+    }
+
+    /**
+     * Finds all PENDING bookings for a specific provider.
+     */
+    @Transactional(readOnly = true)
+    public List<BookingResponseDto> findPendingBookingsByServiceProvider(String providerEmail) {
+        log.info("Fetching PENDING bookings for provider {}", providerEmail);
+        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
+
+        List<Booking> bookings = bookingRepository
+                .findAllByProviderAndStatus(provider, BookingStatus.PENDING);
+
+        return bookings.stream()
+                .map(this::toResponseDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Allows a Service Provider to cancel a booking.
+     */
+    @Transactional
+    public void updateBookingStatusToCancelledByServiceProvider(String providerEmail, Long bookingId) {
+        log.info("Provider {} attempting to CANCEL booking ID {}", providerEmail, bookingId);
+        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
+        Booking booking = findBookingByIdOrThrow(bookingId);
+
+        verifyProviderOwnership(booking, provider);
+
+        booking.setStatus(BookingStatus.CANCELLED_BY_PROVIDER);
+        bookingRepository.save(booking);
+        log.info("Booking ID {} status set to CANCELLED_BY_PROVIDER", bookingId);
+    }
+
+    /**
+     * Allows a User to cancel a booking if it's PENDING or CONFIRMED.
+     */
+    @Transactional
+    public void updateBookingStatusToCancelledByUser(String customerEmail, Long bookingId) {
+        log.info("User {} attempting to CANCEL booking ID {}", customerEmail, bookingId);
+        User customer = findUserByEmailOrThrow(customerEmail);
+        checkUserStatus(customer);
+
+        Booking booking = findBookingByIdOrThrow(bookingId);
+        verifyCustomerOwnership(booking, customer);
+
+        Set<BookingStatus> cancellableStates = Set.of(BookingStatus.PENDING, BookingStatus.CONFIRMED);
+        if (!cancellableStates.contains(booking.getStatus())) {
+            log.warn("User {} failed to cancel booking ID {}: Status is {}",
+                    customerEmail, bookingId, booking.getStatus());
+            throw new IllegalStateException("Booking cannot be cancelled in its current state: " + booking.getStatus());
+        }
+
+        booking.setStatus(BookingStatus.CANCELLED_BY_USER);
+        bookingRepository.save(booking);
+        log.info("Booking ID {} status set to CANCELLED_BY_USER", bookingId);
+    }
+
+    /**
+     * Allows a Service Provider to confirm a PENDING booking.
+     */
+    @Transactional
+    public void updateBookingStatusToConfirmed(String providerEmail, Long bookingId) {
+        log.info("Provider {} attempting to CONFIRM booking ID {}", providerEmail, bookingId);
+        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
+        Booking booking = findBookingByIdOrThrow(bookingId);
+
+        verifyProviderOwnership(booking, provider);
+
+        if (booking.getStatus() != BookingStatus.PENDING) {
+            log.warn("Provider {} failed to confirm booking ID {}: Status is {}",
+                    providerEmail, bookingId, booking.getStatus());
+            throw new IllegalStateException("Only PENDING bookings can be confirmed.");
+        }
+
+        booking.setStatus(BookingStatus.CONFIRMED);
+        bookingRepository.save(booking);
+        log.info("Booking ID {} status set to CONFIRMED", bookingId);
+    }
+
+    /**
+     * Allows a Service Provider to mark a CONFIRMED booking as IN_PROGRESS.
+     */
+    @Transactional
+    public void updateBookingStatusToInProgress(String providerEmail, Long bookingId) {
+        log.info("Provider {} attempting to set booking ID {} to IN_PROGRESS", providerEmail, bookingId);
+        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
+        Booking booking = findBookingByIdOrThrow(bookingId);
+
+        verifyProviderOwnership(booking, provider);
+
+        if (booking.getStatus() != BookingStatus.CONFIRMED) {
+            log.warn("Provider {} failed to start booking ID {}: Status is {}",
+                    providerEmail, bookingId, booking.getStatus());
+            throw new IllegalStateException("Only CONFIRMED bookings can be started.");
+        }
+
+        // Check if the booking is for today
+        if (!booking.getStartTime().toLocalDate().equals(LocalDate.now())) {
+            log.warn("Provider {} failed to start booking ID {}: Not scheduled for today.",
+                    providerEmail, bookingId);
+            throw new IllegalStateException("Booking is not scheduled for today.");
+        }
+
+        booking.setStatus(BookingStatus.IN_PROGRESS);
+        bookingRepository.save(booking);
+        log.info("Booking ID {} status set to IN_PROGRESS", bookingId);
+    }
+
+    /**
+     * Allows a Service Provider to mark an IN_PROGRESS booking as COMPLETED.
+     */
+    @Transactional
+    public void updateBookingStatusToCompleted(String providerEmail, Long bookingId) {
+        log.info("Provider {} attempting to COMPLETE booking ID {}", providerEmail, bookingId);
+        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
+        Booking booking = findBookingByIdOrThrow(bookingId);
+
+        verifyProviderOwnership(booking, provider);
+
+        if (booking.getStatus() != BookingStatus.IN_PROGRESS) {
+            log.warn("Provider {} failed to complete booking ID {}: Status is {}",
+                    providerEmail, bookingId, booking.getStatus());
+            throw new IllegalStateException("Only IN_PROGRESS bookings can be completed.");
+        }
+
+        booking.setStatus(BookingStatus.COMPLETED);
+        bookingRepository.save(booking);
+        log.info("Booking ID {} status set to COMPLETED", bookingId);
+    }
+
+    // --- PRIVATE HELPER & VALIDATION METHODS ---
+
+    private void checkUserStatus(User user) {
+        if (user.getStatus() == UserStatus.SUSPENDED) {
+            log.warn("User {} is SUSPENDED", user.getEmail());
+            throw new UserSuspendedException("User account is suspended.");
+        }
+        if (user.getStatus() == UserStatus.BLOCKED) {
+            log.warn("User {} is BLOCKED", user.getEmail());
+            throw new UserBlockedException("User account is blocked.");
+        }
+    }
+
+    private void checkProviderStatus(ServiceProvider provider) {
+        Set<ApprovalStatus> disallowedStatus = Set.of(ApprovalStatus.PENDING, ApprovalStatus.REJECTED);
+
+        if (disallowedStatus.contains(provider.getApprovalStatus())) {
+            log.warn("Provider ID {} is not approved. Status: {}",
+                    provider.getId(), provider.getApprovalStatus());
+            throw new ServiceProviderNotApprovedException("Service provider is not approved.");
+        }
+
+        // Also check the provider's underlying User status
+        checkUserStatus(provider.getUser());
+    }
+
+    private boolean processPayment(User customer, float amount) {
+        // Mock payment logic
+        log.info("Processing payment of {} for user {}", amount, customer.getEmail());
+        // ... call to Stripe, PayPal, etc.
+        log.info("Payment successful.");
+        return true;
+    }
+
+    // --- Entity Finders ---
+
+    private User findUserByEmailOrThrow(String email) {
+        return userRepository.findByEmail(email)
+            .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
+    }
+
+    private ServiceProvider findProviderByEmailOrThrow(String email) {
+        User user = findUserByEmailOrThrow(email);
+        return providerRepository.findById(user.getId())
+            .orElseThrow(() -> new ResourceNotFoundException("ServiceProvider profile not found for user: " + email));
+    }
+
+    private ServicesProvided findServiceByIdOrThrow(Long id) {
+        return servicesProvidedRepository.findById(id)
+            .orElseThrow(() -> new ServicesProvidedNotFoundException("Service not found with ID: " + id));
+    }
+
+    private Booking findBookingByIdOrThrow(Long id) {
+        return bookingRepository.findById(id)
+            .orElseThrow(() -> new BookingNotFoundException("Booking not found with ID: "f + id));
+    }
+
+    // --- Ownership Verifiers ---
+
+    private void verifyProviderOwnership(Booking booking, ServiceProvider provider) {
+        if (!booking.getProvider().getId().equals(provider.getId())) {
+            log.warn("Provider ID {} does not own booking ID {}", provider.getId(), booking.getId());
+            throw new BookingNotFoundException("Booking not found for this provider.");
+        }
+    }
+
+    private void verifyCustomerOwnership(Booking booking, User customer) {
+        if (!booking.getCustomer().getId().equals(customer.getId())) {
+            log.warn("Customer ID {} does not own booking ID {}", customer.getId(), booking.getId());
+            throw new BookingNotFoundException("Booking not found for this customer.");
+        }
+    }
+
+    // --- Mapper ---
+
+    private BookingResponseDto toResponseDto(Booking booking) {
+        return new BookingResponseDto(
+                booking.getId(),
+                booking.getCustomer().getId(),
+                booking.getCustomer().getFirstName(), // Assuming User has these fields
+                booking.getProvider().getId(),
+                booking.getProvider().getUser().getFirstName(), // Assuming User has these fields
+                booking.getService().getId(),
+                booking.getService().getName(),
+                booking.getStartTime(),
+                booking.getEndTime(),
+                booking.getStatus(),
+                booking.getExtraInstructions()
+        );
+    }
+}
+
+------------------
+
+// BookingController.java
 package com.example.demo.controller;
 
-import com.example.demo.dto.ServicesProvidedDto;
-import com.example.demo.service.ServicesProvidedService;
-import com.example.demo.config.JwtService; // Assuming this is your JwtService package
+import com.example.demo.config.JwtService;
+import com.example.demo.dto.BookingRequestDto;
+import com.example.demo.dto.BookingResponseDto;
+import com.example.demo.service.BookingService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,105 +450,119 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/services-provided")
+@RequestMapping("/api/v1/bookings")
 @RequiredArgsConstructor
 @Slf4j
-public class ServicesProvidedController {
+public class BookingController {
 
-    private final ServicesProvidedService servicesProvidedService;
+    private final BookingService bookingService;
     private final JwtService jwtService;
 
     /**
-     * POST /api/v1/services-provided : Creates a new service.
-     * The provider is identified by their JWT token.
+     * POST /api/v1/bookings : (Customer) Create a new booking.
      */
     @PostMapping
-    public ResponseEntity<ServicesProvidedDto> addService(
+    public ResponseEntity<Void> createBooking(
             @RequestHeader("Authorization") String authHeader,
-            @Valid @RequestBody ServicesProvidedDto serviceDto) {
+            @Valid @RequestBody BookingRequestDto bookingDto) {
 
-        String email = extractEmailFromToken(authHeader);
-        ServicesProvidedDto createdService = servicesProvidedService.addService(email, serviceDto);
+        String customerEmail = extractEmailFromToken(authHeader);
+        bookingService.book(customerEmail, bookingDto);
 
-        // Return 201 Created
-        return ResponseEntity.status(HttpStatus.CREATED).body(createdService);
+        return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
     /**
-     * PUT /api/v1/services-provided/{serviceId} : Updates an existing service.
-     * Ensures the user updating the service is the one who owns it.
+     * GET /api/v1/bookings/provider/pending : (Provider) Get all pending bookings.
      */
-    @PutMapping("/{serviceId}")
-    public ResponseEntity<ServicesProvidedDto> updateService(
-            @PathVariable Long serviceId,
-            @RequestHeader("Authorization") String authHeader,
-            @Valid @RequestBody ServicesProvidedDto serviceDto) {
-
-        String email = extractEmailFromToken(authHeader);
-        // Assumes service method is: updateService(Long serviceId, ServicesProvidedDto dto, String email)
-        ServicesProvidedDto updatedService = servicesProvidedService.updateService(serviceId, serviceDto, email);
-
-        // Return 200 OK
-        return ResponseEntity.ok(updatedService);
-    }
-
-    /**
-     * GET /api/v1/services-provided/{serviceId} : Retrieves a specific service by ID.
-     * This is a public endpoint.
-     */
-    @GetMapping("/{serviceId}")
-    public ResponseEntity<ServicesProvidedDto> getServiceById(@PathVariable Long serviceId) {
-        ServicesProvidedDto serviceDto = servicesProvidedService.getServiceById(serviceId);
-
-        // Return 200 OK
-        return ResponseEntity.ok(serviceDto);
-    }
-
-    /**
-     * GET /api/v1/services-provided/category/{categoryId} : Retrieves all services
-     * for a given category. This is a public endpoint.
-     */
-    @GetMapping("/category/{categoryId}")
-    public ResponseEntity<List<ServicesProvidedDto>> getServicesByCategory(
-            @PathVariable Long categoryId) {
-
-        List<ServicesProvidedDto> services = servicesProvidedService.getAllServicesByCategory(categoryId);
-
-        // Return 200 OK
-        return ResponseEntity.ok(services);
-    }
-
-    /**
-     * DELETE /api/v1/services-provided/{serviceId} : Deletes a service.
-     * Ensures the user deleting the service is the one who owns it.
-     */
-    @DeleteMapping("/{serviceId}")
-    public ResponseEntity<Void> deleteService(
-            @PathVariable Long serviceId,
+    @GetMapping("/provider/pending")
+    public ResponseEntity<List<BookingResponseDto>> getPendingBookings(
             @RequestHeader("Authorization") String authHeader) {
 
-        String email = extractEmailFromToken(authHeader);
-        // Assumes service method is: deleteService(Long serviceId, String email)
-        servicesProvidedService.deleteService(serviceId, email);
+        String providerEmail = extractEmailFromToken(authHeader);
+        List<BookingResponseDto> bookings = bookingService
+                .findPendingBookingsByServiceProvider(providerEmail);
 
-        // Return 204 No Content
-        return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(bookings);
     }
 
+    /**
+     * PATCH /api/v1/bookings/{id}/cancel-by-user : (Customer) Cancel a booking.
+     */
+    @PatchMapping("/{id}/cancel-by-user")
+    public ResponseEntity<Void> cancelByUser(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable("id") Long bookingId) {
+
+        String customerEmail = extractEmailFromToken(authHeader);
+        bookingService.updateBookingStatusToCancelledByUser(customerEmail, bookingId);
+
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * PATCH /api/v1/bookings/{id}/cancel-by-provider : (Provider) Cancel a booking.
+     */
+    @PatchMapping("/{id}/cancel-by-provider")
+    public ResponseEntity<Void> cancelByProvider(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable("id") Long bookingId) {
+
+        String providerEmail = extractEmailFromToken(authHeader);
+        bookingService.updateBookingStatusToCancelledByServiceProvider(providerEmail, bookingId);
+
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * PATCH /api/v1/bookings/{id}/confirm : (Provider) Confirm a pending booking.
+     */
+    @PatchMapping("/{id}/confirm")
+    public ResponseEntity<Void> confirmBooking(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable("id") Long bookingId) {
+
+        String providerEmail = extractEmailFromToken(authHeader);
+        bookingService.updateBookingStatusToConfirmed(providerEmail, bookingId);
+
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * PATCH /api/v1/bookings/{id}/start : (Provider) Mark a confirmed booking as IN_PROGRESS.
+     */
+    @PatchMapping("/{id}/start")
+    public ResponseEntity<Void> startBooking(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable("id") Long bookingId) {
+
+        String providerEmail = extractEmailFromToken(authHeader);
+        bookingService.updateBookingStatusToInProgress(providerEmail, bookingId);
+
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * PATCH /api/v1/bookings/{id}/complete : (Provider) Mark an in-progress booking as COMPLETED.
+     */
+    @PatchMapping("/{id}/complete")
+    public ResponseEntity<Void> completeBooking(
+            @RequestHeader("Authorization") String authHeader,
+            @PathVariable("id") Long bookingId) {
+
+        String providerEmail = extractEmailFromToken(authHeader);
+        bookingService.updateBookingStatusToCompleted(providerEmail, bookingId);
+
+        return ResponseEntity.ok().build();
+    }
 
     // --- Private Helper Method ---
 
-    /**
-     * Extracts the email from the "Bearer <token>" header.
-     */
     private String extractEmailFromToken(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             log.warn("Invalid or missing Authorization header.");
-            // In a real app, a Spring Security filter would handle this
-            // before it even reaches the controller.
             throw new IllegalArgumentException("Invalid Authorization header");
         }
-        // Extract token by removing "Bearer " prefix (7 characters)
         String token = authHeader.substring(7);
         return jwtService.extractEmail(token);
     }
