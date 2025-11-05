@@ -1,84 +1,26 @@
-// ServiceCategoryController.java
-package com.example.demo.controller;
-
-import com.example.demo.dto.ServiceCategoryDto;
-import com.example.demo.service.ServiceCategoryService;
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
-
-import java.net.URI;
-import java.util.List;
-
-@RestController
-@RequestMapping("/api/v1/categories")
-@RequiredArgsConstructor
-public class ServiceCategoryController {
-
-    private final ServiceCategoryService categoryService;
-
-    /**
-     * POST /api/v1/categories : Creates a new service category.
-     * Uses @Valid to trigger DTO validations.
-     */
-    @PostMapping
-    public ResponseEntity<ServiceCategoryDto> createCategory(@Valid @RequestBody ServiceCategoryDto categoryDto) {
-        ServiceCategoryDto createdCategory = categoryService.createCategory(categoryDto);
-
-        // Build a "Location" header for the newly created resource
-        URI location = ServletUriComponentsBuilder
-                .fromCurrentRequest()
-                .path("/{id}")
-                .buildAndExpand(createdCategory.id()) // Assuming Dto is updated to have ID, or service returns it
-                .toUri();
-
-        // Return 201 Created
-        return ResponseEntity.created(location).body(createdCategory);
-    }
-
-    /**
-     * GET /api/v1/categories/{id} : Retrieves a specific service category by ID.
-     */
-    @GetMapping("/{id}")
-    public ResponseEntity<ServiceCategoryDto> getCategoryById(@PathVariable Long id) {
-        ServiceCategoryDto categoryDto = categoryService.getCategoryById(id);
-        // Return 200 OK
-        return ResponseEntity.ok(categoryDto);
-    }
-
-    /**
-     * GET /api/v1/categories : Retrieves all service categories.
-     * (Adding this common endpoint for completeness)
-     */
-    @GetMapping
-    public ResponseEntity<List<ServiceCategoryDto>> getAllCategories() {
-        List<ServiceCategoryDto> categories = categoryService.getAllCategories(); // Assumes service has this method
-        // Return 200 OK
-        return ResponseEntity.ok(categories);
-    }
-
-    /**
-     * PUT /api/v1/categories/{id} : Updates an existing service category.
-     * Uses @Valid to trigger DTO validations.
-     */
-    @PutMapping("/{id}")
-    public ResponseEntity<ServiceCategoryDto> updateCategory(@PathVariable Long id,
-                                                             @Valid @RequestBody ServiceCategoryDto categoryDto) {
-        ServiceCategoryDto updatedCategory = categoryService.updateCategory(id, categoryDto);
-        // Return 200 OK
-        return ResponseEntity.ok(updatedCategory);
-    }
-
-    /**
-     * DELETE /api/v1/categories/{id} : Deletes a service category by ID.
-     */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteCategory(@PathVariable Long id) {
-        categoryService.deleteCategory(id);
-        // Return 204 No Content
-        return ResponseEntity.noContent().build();
-    }
-}
+[
+  {
+    "name": "Plumbing Services",
+    "description": "All plumbing solutions, from leaky faucets and pipe repairs to new installations for kitchens and bathrooms."
+  },
+  {
+    "name": "Electrical Services",
+    "description": "Certified electricians for wiring, fixture installation, power socket repairs, and electrical safety checks."
+  },
+  {
+    "name": "Home Cleaning",
+    "description": "Professional deep cleaning, regular housekeeping, and specialized services like post-construction or move-in cleaning."
+  },
+  {
+    "name": "Salon & Spa at Home",
+    "description": "Beauty, wellness, and grooming services including haircuts, facials, manicures, and massages delivered to your doorstep."
+  },
+  {
+    "name": "Appliance Repair",
+    "description": "Repair and maintenance services for all major home appliances, including ACs, refrigerators, washing machines, and microwaves."
+  },
+  {
+    "name": "Pest Control",
+    "description": "Effective and safe treatments for common household pests like cockroaches, termites, rodents, and bed bugs."
+  }
+]
