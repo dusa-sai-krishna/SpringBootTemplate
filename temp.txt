@@ -1,26 +1,420 @@
-[
-  {
-    "name": "Plumbing Services",
-    "description": "All plumbing solutions, from leaky faucets and pipe repairs to new installations for kitchens and bathrooms."
-  },
-  {
-    "name": "Electrical Services",
-    "description": "Certified electricians for wiring, fixture installation, power socket repairs, and electrical safety checks."
-  },
-  {
-    "name": "Home Cleaning",
-    "description": "Professional deep cleaning, regular housekeeping, and specialized services like post-construction or move-in cleaning."
-  },
-  {
-    "name": "Salon & Spa at Home",
-    "description": "Beauty, wellness, and grooming services including haircuts, facials, manicures, and massages delivered to your doorstep."
-  },
-  {
-    "name": "Appliance Repair",
-    "description": "Repair and maintenance services for all major home appliances, including ACs, refrigerators, washing machines, and microwaves."
-  },
-  {
-    "name": "Pest Control",
-    "description": "Effective and safe treatments for common household pests like cockroaches, termites, rodents, and bed bugs."
-  }
-]
+// Availability.java
+package com.example.model.enums;
+
+public enum Availability {
+    SUNDAY,
+    MONDAY,
+    TUESDAY,
+    WEDNESDAY,
+    THURSDAY,
+    FRIDAY,
+    SATURDAY
+}
+-----------
+    // ServicesProvided.java
+    package com.example.model;
+
+    import com.example.model.enums.Availability;
+    import jakarta.persistence.*;
+    import lombok.AllArgsConstructor;
+    import lombok.Builder;
+    import lombok.Data;
+    import lombok.NoArgsConstructor;
+    import org.hibernate.annotations.CreationTimestamp;
+    import org.hibernate.annotations.UpdateTimestamp;
+
+    import java.time.LocalDateTime;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Entity
+    @Table(name = "services_provided")
+    public class ServicesProvided {
+
+        @Id
+        @GeneratedValue(strategy = GenerationType.IDENTITY)
+        private Long id;
+
+        @Column(nullable = false, length = 200)
+        private String name;
+
+        @Column(columnDefinition = "TEXT")
+        private String description;
+
+        @Column(nullable = false)
+        private float price; // Note: For financial data, BigDecimal is often preferred over float.
+
+        @Enumerated(EnumType.STRING)
+        @Column(nullable = false, length = 50)
+        private Availability availability;
+
+        // --- Relationships ---
+
+        @ManyToOne(fetch = FetchType.LAZY, optional = false)
+        @JoinColumn(name = "service_category_id", nullable = false)
+        private ServiceCategory serviceCategory;
+
+        @ManyToOne(fetch = FetchType.LAZY, optional = false)
+        @JoinColumn(name = "provider_id", nullable = false, referencedColumnName = "user_id")
+        private ServiceProvider serviceProvider;
+
+        // --- Timestamps ---
+
+        @CreationTimestamp
+        @Column(name = "created_at", updatable = false, nullable = false)
+        private LocalDateTime createdAt;
+
+        @UpdateTimestamp
+        @Column(name = "updated_at", nullable = false)
+        private LocalDateTime updatedAt;
+    }
+
+    --------------------
+
+    // ServiceProvider.java
+    package com.example.model;
+
+    import jakarta.persistence.*;
+    import lombok.AllArgsConstructor;
+    import lombok.Builder;
+    import lombok.Data;
+    import lombok.NoArgsConstructor;
+    import org.hibernate.annotations.CreationTimestamp;
+    import org.hibernate.annotations.UpdateTimestamp;
+
+    import java.time.LocalDateTime;
+    import java.util.ArrayList; // Import
+    import java.util.List;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Entity
+    @Table(name = "service_providers")
+    public class ServiceProvider {
+
+        @Id
+        @Column(name = "user_id") // This will be the Primary Key AND Foreign Key
+        private Long id;
+
+        @OneToOne(fetch = FetchType.LAZY, optional = false)
+        @MapsId // Tells JPA to use the ID of the 'User' entity
+        @JoinColumn(name = "user_id")
+        private User user;
+
+        @Column(columnDefinition = "TEXT") // 'bio' can be long
+        private String bio;
+
+        @Enumerated(EnumType.STRING)
+        @Column(name = "approval_status", nullable = false)
+        private ApprovalStatus approvalStatus; // Assumes ApprovalStatus enum exists
+
+        @ElementCollection(fetch = FetchType.LAZY)
+        @CollectionTable(
+                name = "service_provider_skills",
+                joinColumns = @JoinColumn(name = "user_id")
+        )
+        @Column(name = "skill")
+        private List<String> skills;
+
+        @ElementCollection(fetch = FetchType.LAZY)
+        @CollectionTable(
+                name = "service_provider_certifications",
+                joinColumns = @JoinColumn(name = "user_id")
+        )
+        private List<Certification> certifications; // Assumes Certification embeddable/entity exists
+
+        // --- NEWLY ADDED FIELD ---
+        @OneToMany(
+                mappedBy = "serviceProvider", // "serviceProvider" field in ServicesProvided
+                cascade = CascadeType.ALL,
+                orphanRemoval = true,
+                fetch = FetchType.LAZY
+        )
+        @Builder.Default // Ensures this list is initialized by Lombok's builder
+        private List<ServicesProvided> services = new ArrayList<>();
+
+        // --- Timestamps ---
+
+        @CreationTimestamp
+        @Column(name = "created_at", updatable = false, nullable = false)
+        private LocalDateTime createdAt;
+
+        @UpdateTimestamp
+        @Column(name = "updated_at", nullable = false)
+        private LocalDateTime updatedAt;
+
+        // --- HELPER METHODS for bidirectional consistency ---
+
+        /**
+         * Adds a service to this provider and sets the back-reference.
+         */
+        public void addService(ServicesProvided service) {
+            if (services == null) {
+                services = new ArrayList<>();
+            }
+            services.add(service);
+            service.setServiceProvider(this);
+        }
+
+        /**
+         * Removes a service from this provider and unsets the back-reference.
+         */
+        public void removeService(ServicesProvided service) {
+            if (services != null) {
+                services.remove(service);
+            }
+            service.setServiceProvider(null);
+        }
+    }
+
+
+    ---------------------------------
+// ServicesProvidedDto.java
+package com.example.demo.dto;
+
+import com.example.model.enums.Availability;
+import jakarta.validation.constraints.*;
+
+// Using a record for a modern, immutable DTO
+public record ServicesProvidedDto(
+    @NotBlank(message = "Service name cannot be blank.")
+    @Size(min = 3, max = 200, message = "Service name must be between 3 and 200 characters.")
+    String name,
+
+    @Size(max = 1000, message = "Description cannot be longer than 1000 characters.")
+    String description,
+
+    @NotNull(message = "Price cannot be null.")
+    @Positive(message = "Price must be a positive value.")
+    Float price,
+
+    @NotNull(message = "Availability must be specified.")
+    Availability availability,
+
+    @NotNull(message = "Service Category ID cannot be null.")
+    Long serviceCategoryId
+) {
+}
+
+---------------------
+
+// ServicesProvidedService.java
+package com.example.demo.service;
+
+import com.example.demo.dto.ServicesProvidedDto;
+import com.example.demo.exception.ResourceNotFoundException;
+import com.example.demo.exception.ServiceProviderNotApprovedException;
+import com.example.demo.exception.ServicesProvidedNotFoundException;
+import com.example.model.ServiceCategory;
+import com.example.model.ServiceProvider;
+import com.example.model.ServicesProvided;
+import com.example.model.User;
+import com.example.model.enums.ApprovalStatus; // Assuming this enum exists
+import com.example.repository.ServiceCategoryRepository;
+import com.example.repository.ServiceProviderRepository;
+import com.example.repository.ServicesProvidedRepository;
+import com.example.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ServicesProvidedService {
+
+    private final ServicesProvidedRepository servicesProvidedRepository;
+    private final UserRepository userRepository;
+    private final ServiceProviderRepository serviceProviderRepository;
+    private final ServiceCategoryRepository serviceCategoryRepository;
+
+    /**
+     * Adds a new service for an approved provider.
+     */
+    @Transactional
+    public ServicesProvidedDto addService(String providerEmail, ServicesProvidedDto serviceDto) {
+        log.info("Attempting to add service '{}' for provider {}",
+            serviceDto.name(), providerEmail);
+
+        // Outsourced checks
+        isApproved(providerEmail);
+        ServiceProvider provider = findProviderByEmailOrThrow(providerEmail);
+        ServiceCategory category = findCategoryByIdOrThrow(serviceDto.serviceCategoryId());
+
+        // Main logic
+        ServicesProvided newService = toEntity(serviceDto, provider, category);
+        ServicesProvided savedService = servicesProvidedRepository.save(newService);
+
+        log.info("Successfully added service with ID {}", savedService.getId());
+        return toDto(savedService);
+    }
+
+    /**
+     * Updates an existing service.
+     */
+    @Transactional
+    public ServicesProvidedDto updateService(Long serviceId, ServicesProvidedDto serviceDto) {
+        log.info("Attempting to update service with ID: {}", serviceId);
+
+        // Outsourced checks
+        ServicesProvided existingService = findServiceByIdOrThrow(serviceId);
+        ServiceCategory newCategory = findCategoryByIdOrThrow(serviceDto.serviceCategoryId());
+
+        // Main logic: Map updates
+        existingService.setName(serviceDto.name());
+        existingService.setDescription(serviceDto.description());
+        existingService.setPrice(serviceDto.price());
+        existingService.setAvailability(serviceDto.availability());
+        existingService.setServiceCategory(newCategory);
+        // The provider (owner) of the service does not change on update
+
+        ServicesProvided updatedService = servicesProvidedRepository.save(existingService);
+        log.info("Successfully updated service with ID: {}", updatedService.getId());
+        return toDto(updatedService);
+    }
+
+    /**
+     * Reads a single service by its ID.
+     */
+    @Transactional(readOnly = true)
+    public ServicesProvidedDto getServiceById(Long serviceId) {
+        log.info("Fetching service with ID: {}", serviceId);
+
+        // Outsourced check
+        ServicesProvided service = findServiceByIdOrThrow(serviceId);
+
+        log.info("Found service: {}", service.getName());
+        return toDto(service);
+    }
+
+    /**
+     * Fetches all services belonging to a specific category.
+     */
+    @Transactional(readOnly = true)
+    public List<ServicesProvidedDto> getAllServicesByCategory(Long categoryId) {
+        log.info("Fetching all services for category ID: {}", categoryId);
+
+        // Outsourced check (to ensure category exists)
+        ServiceCategory category = findCategoryByIdOrThrow(categoryId);
+
+        List<ServicesProvided> services = servicesProvidedRepository.findAllByServiceCategory(category);
+
+        log.info("Found {} services for category ID: {}", services.size(), categoryId);
+        return services.stream()
+                .map(this::toDto)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Deletes a service by its ID.
+     */
+    @Transactional
+    public void deleteService(Long serviceId) {
+        log.info("Attempting to delete service with ID: {}", serviceId);
+
+        // Outsourced check
+        ServicesProvided service = findServiceByIdOrThrow(serviceId);
+
+        servicesProvidedRepository.delete(service);
+        log.info("Successfully deleted service with ID: {}", serviceId);
+    }
+
+
+    // --- PRIVATE HELPER & VALIDATION METHODS ---
+
+    /**
+     * Checks if a ServiceProvider is approved. Throws exception if not.
+     */
+    private void isApproved(String email) {
+        ServiceProvider provider = findProviderByEmailOrThrow(email);
+
+        if (provider.getApprovalStatus() != ApprovalStatus.APPROVED) {
+            log.warn("Service provider {} is not approved. Status: {}",
+                email, provider.getApprovalStatus());
+            throw new ServiceProviderNotApprovedException(
+                "Service provider " + email + " is not approved to add services.");
+        }
+        log.debug("Provider {} is approved.", email);
+    }
+
+    /**
+     * Finds a User by email or throws ResourceNotFoundException.
+     */
+    private User findUserByEmailOrThrow(String email) {
+        return userRepository.findByEmail(email) // Assuming this method exists
+            .orElseThrow(() -> {
+                log.warn("User not found with email: {}", email);
+                return new ResourceNotFoundException("User not found with email: " + email);
+            });
+    }
+
+    /**
+     * Finds a ServiceProvider by email or throws ResourceNotFoundException.
+     */
+    private ServiceProvider findProviderByEmailOrThrow(String email) {
+        User user = findUserByEmailOrThrow(email);
+        return serviceProviderRepository.findById(user.getId())
+            .orElseThrow(() -> {
+                log.warn("ServiceProvider profile not found for user ID: {}", user.getId());
+                return new ResourceNotFoundException(
+                    "ServiceProvider profile not found for user: " + email);
+            });
+    }
+
+    /**
+     * Finds a ServiceCategory by ID or throws ResourceNotFoundException.
+     */
+    private ServiceCategory findCategoryByIdOrThrow(Long categoryId) {
+        return serviceCategoryRepository.findById(categoryId)
+            .orElseThrow(() -> {
+                log.warn("ServiceCategory not found with ID: {}", categoryId);
+                return new ResourceNotFoundException(
+                    "ServiceCategory not found with ID: " + categoryId);
+            });
+    }
+
+    /**
+     * Finds a ServicesProvided by ID or throws ServicesProvidedNotFoundException.
+     */
+    private ServicesProvided findServiceByIdOrThrow(Long serviceId) {
+        return servicesProvidedRepository.findById(serviceId)
+            .orElseThrow(() -> {
+                log.warn("ServicesProvided not found with ID: {}", serviceId);
+                return new ServicesProvidedNotFoundException(
+                    "Service not found with ID: " + serviceId);
+            });
+    }
+
+    // --- MAPPERS ---
+
+    private ServicesProvidedDto toDto(ServicesProvided service) {
+        return new ServicesProvidedDto(
+                service.getName(),
+                service.getDescription(),
+                service.getPrice(),
+                service.getAvailability(),
+                service.getServiceCategory().getId()
+        );
+    }
+
+    private ServicesProvided toEntity(ServicesProvidedDto dto,
+                                      ServiceProvider provider,
+                                      ServiceCategory category) {
+        return ServicesProvided.builder()
+                .name(dto.name())
+                .description(dto.description())
+                .price(dto.price())
+                .availability(dto.availability())
+                .serviceProvider(provider)
+                .serviceCategory(category)
+                .build();
+    }
+}
